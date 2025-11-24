@@ -102,6 +102,20 @@ async function handleAnalyze(cmd: AnalyzeCmd, ctx: RpcContext) {
         insights: cachedData.insights || [],
       });
     }
+    
+    // Still run bias detection if requested (not cached separately)
+    if (detectBias) {
+      try {
+        const biases = await generateBiasDetection(text);
+        publish(wsId, {
+          type: 'biases',
+          biases: biases,
+        });
+      } catch (error) {
+        console.error('Bias detection error:', error);
+      }
+    }
+    
     return { ok: true };
   }
   

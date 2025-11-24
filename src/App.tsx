@@ -230,6 +230,7 @@ export function App() {
               textLength={text.length}
               biasMode={biasMode}
               onToggleBiasMode={() => setBiasMode(!biasMode)}
+              hasBiases={biases.length > 0}
             />
           </div>
         </div>

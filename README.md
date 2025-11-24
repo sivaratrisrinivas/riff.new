@@ -6,6 +6,7 @@ A minimalist writing tool that challenges your ideas in real-time. Type your tho
 
 - **Split-screen interface**: Write on the left, see insights on the right
 - **Multi-persona analysis**: Get insights from Steelman, Red Team, Socratic, and Lateral perspectives simultaneously
+- **Bias detection**: Inline detection of cognitive biases with wavy highlights and hover tooltips
 - **Real-time AI analysis**: Debounced text analysis (2-3 seconds after typing stops)
 - **Streaming responses**: Watch insights appear word-by-word
 - **Intelligent caching**: Instant results for previously analyzed text
@@ -47,9 +48,11 @@ A minimalist writing tool that challenges your ideas in real-time. Type your tho
 
 1. Start typing your idea or argument in the left panel (minimum 10 characters)
 2. Select which personas you want to analyze your text (Steelman, Red Team, Socratic, Lateral)
-3. After 2-3 seconds of inactivity, AI will analyze your text automatically (or click Analyze)
-4. Watch as insights stream in from each selected persona in separate sections
-5. Each insight is color-coded:
+3. Toggle "Biases" button to enable inline cognitive bias detection (optional)
+4. After 2-3 seconds of inactivity, AI will analyze your text automatically (or click Analyze)
+5. Watch as insights stream in from each selected persona in separate sections
+6. If bias detection is enabled, hover over wavy amber underlines in your text to see detected biases
+7. Each insight is color-coded:
    - **Rose**: Counter-arguments
    - **Cyan**: Questions
    - **Violet**: Lateral prompts
@@ -60,6 +63,21 @@ A minimalist writing tool that challenges your ideas in real-time. Type your tho
 - **Red Team**: Attacks assumptions and finds failure modes
 - **Socratic**: Asks probing questions that ladder reasoning
 - **Lateral**: Suggests unexpected analogies and alternative frames
+
+### Bias Detection
+
+When enabled, SKEW detects cognitive biases and logical fallacies in your text, including:
+- Confirmation bias
+- Strawman arguments
+- False dichotomies
+- Ad hominem attacks
+- Appeals to authority
+- Slippery slope reasoning
+- Hasty generalizations
+- Cherry picking
+- Survivorship bias
+
+Detected biases appear as wavy amber underlines. Hover over them to see explanations and suggestions for improvement.
 
 ## Tech Stack
 
@@ -80,10 +98,11 @@ src/
 ├── App.tsx           # Main app component
 ├── schema.ts         # Zod schemas for RPC commands
 ├── components/
-│   ├── Editor.tsx   # Text input component
+│   ├── Editor.tsx   # Text input component with bias highlighting
 │   ├── Insights.tsx # AI insights display
 │   ├── Card.tsx     # Glassmorphism card component
-│   └── PersonaBar.tsx # Persona selection UI
+│   ├── PersonaBar.tsx # Persona selection UI
+│   └── BiasTooltip.tsx # Bias explanation tooltip
 ├── server/
 │   ├── db.ts        # SQLite database initialization
 │   ├── rpc.ts       # RPC command handler
@@ -122,6 +141,11 @@ src/
 **Database issues?**
 - The SQLite database (`riff.sqlite`) is created automatically on first run
 - If you encounter database errors, delete `riff.sqlite` and restart the server
+
+**Bias detection not working?**
+- Make sure the "Biases" button is toggled on in the persona bar
+- Bias detection runs alongside persona analysis, so ensure at least one persona is selected
+- If text changes significantly after analysis, bias highlights may disappear (this is intentional)
 
 ## License
 

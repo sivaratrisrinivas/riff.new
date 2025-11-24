@@ -11,6 +11,7 @@ interface PersonaBarProps {
   textLength?: number;
   biasMode?: boolean;
   onToggleBiasMode?: () => void;
+  hasBiases?: boolean;
 }
 
 function estimateTokens(textLength: number, personaCount: number): number {
@@ -31,6 +32,7 @@ export function PersonaBar({
   textLength = 0,
   biasMode = false,
   onToggleBiasMode,
+  hasBiases = false,
 }: PersonaBarProps) {
   const estimatedTokens = textLength > 0 ? estimateTokens(textLength, selectedPersonas.length || 1) : 0;
   const getPersonaColor = (persona: Persona) => {
@@ -96,13 +98,15 @@ export function PersonaBar({
               px-3 py-1.5 rounded-lg text-xs font-medium
               border transition-all duration-200
               ${biasMode
-                ? 'bg-amber-500/20 border-amber-500/30 text-amber-300'
+                ? hasBiases 
+                  ? 'bg-amber-500/30 border-amber-500/50 text-amber-200 shadow-lg'
+                  : 'bg-amber-500/20 border-amber-500/30 text-amber-300'
                 : 'bg-white/5 border-white/10 text-gray-400 hover:text-white'
               }
             `}
             title="Detect cognitive biases"
           >
-            {biasMode ? '🧠 Biases On' : 'Biases'}
+            {biasMode ? (hasBiases ? '🧠 Biases Found' : '🧠 Biases On') : 'Biases'}
           </button>
         )}
         

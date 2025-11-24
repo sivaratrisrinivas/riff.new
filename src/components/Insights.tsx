@@ -198,11 +198,13 @@ export function Insights({ text, ws, personas, autoMode, biasMode = false, onIns
         }
 
         if (data.bandInsights) {
-          const bandData = data.bandInsights as Record<string, Array<Partial<Insight>> | undefined>;
+          const bandData = data.bandInsights as Record<string, unknown>;
           const normalized: Record<string, Insight[]> = {};
           for (const pid in bandData) {
             if (!Object.prototype.hasOwnProperty.call(bandData, pid)) continue;
-            const items = bandData[pid] ?? [];
+            const rawItems = bandData[pid];
+            // Ensure items is an array
+            const items: Array<Partial<Insight>> = Array.isArray(rawItems) ? rawItems : [];
             normalized[pid] = items.map((item, index) => ({
               id: item.id ?? `cached-${pid}-${index}-${Date.now()}`,
               type: item.type ?? 'lateral-prompt',
