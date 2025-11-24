@@ -99,8 +99,8 @@ class SQLiteCache {
       timestamp: row.created_at,
     };
     
-    // Populate memory cache
-    memoryCache.set(fp, entry);
+    // Populate memory cache (just pass data, LRUCache wraps it)
+    memoryCache.set(fp, data);
     
     return entry;
   }
@@ -108,12 +108,8 @@ class SQLiteCache {
   set(fp: string, data: Record<string, any>): void {
     const now = Date.now();
     
-    // Update memory cache
-    memoryCache.set(fp, {
-      fingerprint: fp,
-      data,
-      timestamp: now,
-    });
+    // Update memory cache (just pass data, LRUCache wraps it)
+    memoryCache.set(fp, data);
     
     // Persist to SQLite
     try {
