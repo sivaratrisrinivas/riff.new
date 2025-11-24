@@ -30,6 +30,7 @@ export const AnalyzeCmd = z.object({
   type: z.literal('analyze'),
   text: z.string().min(10),
   personas: z.array(z.string()).min(0).default([]),
+  detectBias: z.boolean().optional().default(false),
 });
 
 // Union of all commands

@@ -62,3 +62,40 @@ Generate insights for EACH persona. Format your response as a JSON object where 
 Each persona should generate 2-3 insights. Use appropriate types (counter-argument, question, lateral-prompt) based on the persona's style.`;
 }
 
+export function buildBiasPrompt(userText: string): string {
+  return `Analyze this text for cognitive biases and logical fallacies. Identify specific text spans that exhibit these biases:
+
+"${userText}"
+
+Look for these types of biases:
+- confirmation-bias: Seeking or interpreting evidence in ways that confirm existing beliefs
+- strawman: Misrepresenting an argument to make it easier to attack
+- false-dichotomy: Presenting two options as the only possibilities when more exist
+- ad-hominem: Attacking the person instead of the argument
+- appeal-to-authority: Using an authority figure as evidence without proper justification
+- slippery-slope: Assuming one thing will lead to a chain of negative events without evidence
+- hasty-generalization: Drawing broad conclusions from insufficient evidence
+- cherry-picking: Selecting only favorable evidence while ignoring unfavorable evidence
+- survivorship-bias: Focusing on successes while overlooking failures
+
+For each bias found, return a JSON array with objects containing:
+- type: the bias type (e.g., "confirmation-bias")
+- content: the exact text span that exhibits the bias
+- explanation: a brief explanation of why this is a bias and how to improve it (1-2 sentences)
+- start: the character position where the bias text starts
+- end: the character position where the bias text ends
+
+Example format:
+[
+  {
+    "type": "confirmation-bias",
+    "content": "everyone agrees",
+    "explanation": "This phrase assumes universal agreement without evidence. Consider acknowledging dissenting views or providing data to support the claim.",
+    "start": 45,
+    "end": 60
+  }
+]
+
+Return only valid JSON. If no biases are found, return an empty array [].`;
+}
+

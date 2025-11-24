@@ -8,11 +8,12 @@ interface InsightsProps {
   ws: WebSocket | null;
   personas: string[];
   autoMode: boolean;
+  biasMode?: boolean;
   onInsightsChange?: (insights: Insight[]) => void;
   onAnalyzingChange?: (isAnalyzing: boolean) => void;
 }
 
-export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAnalyzingChange }: InsightsProps) {
+export function Insights({ text, ws, personas, autoMode, biasMode = false, onInsightsChange, onAnalyzingChange }: InsightsProps) {
   const [insights, setInsights] = useState<Insight[]>([]);
   const [bandInsights, setBandInsights] = useState<Record<string, Insight[]>>({});
   const [streamingTexts, setStreamingTexts] = useState<Record<string, string>>({});
@@ -35,6 +36,30 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
 
     // Auto mode: trigger analysis automatically
     if (autoMode) {
+      let openListener: ((event: Event) => void) | null = null;
+      const sendPayload = (payload: Record<string, unknown>, label: string) => {
+        const sendNow = () => {
+          console.info(`[ws] send analyze ${label}`);
+          ws.send(JSON.stringify(payload));
+        };
+
+        if (ws.readyState === WebSocket.OPEN) {
+          sendNow();
+        } else if (ws.readyState === WebSocket.CONNECTING) {
+          console.info(`[ws] queue analyze ${label} until open`);
+          openListener = () => {
+            if (openListener) {
+              ws.removeEventListener('open', openListener);
+            }
+            openListener = null;
+            sendNow();
+          };
+          ws.addEventListener('open', openListener);
+        } else {
+          console.warn(`[ws] skip analyze ${label} (readyState ${ws.readyState})`);
+        }
+      };
+
       if (personas.length > 0) {
         setIsLoading(true);
         setIsLoadingPersonas(Object.fromEntries(personas.map(p => [p, true])));
@@ -48,13 +73,16 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
         if (onAnalyzingChange) {
           setTimeout(() => onAnalyzingChange(true), 0);
         }
-
-        ws.send(JSON.stringify({ 
-          type: 'analyze', 
-          text,
-          personas,
-          fp: '', // Will be computed server-side
-        }));
+        sendPayload(
+          {
+            type: 'analyze',
+            text,
+            personas,
+            fp: '',
+            detectBias: biasMode,
+          },
+          '(auto)'
+        );
       } else {
         // Single persona mode (backward compatible)
         setIsLoading(true);
@@ -68,18 +96,25 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
         if (onAnalyzingChange) {
           setTimeout(() => onAnalyzingChange(true), 0);
         }
-
-        ws.send(JSON.stringify({ type: 'analyze', text }));
+        sendPayload({ type: 'analyze', text, detectBias: biasMode }, '(auto-single)');
       }
+
+      return () => {
+        if (openListener) {
+          ws.removeEventListener('open', openListener);
+          openListener = null;
+        }
+      };
     }
-  }, [text, ws, personas, autoMode]);
+  }, [text, ws, personas, autoMode, biasMode]);
 
   useEffect(() => {
     if (!ws) return;
 
     const handleMessage = (event: MessageEvent) => {
       const data = JSON.parse(event.data);
-      
+      console.info('[ws] recv', data);
+
       if (data.type === 'stream') {
         if (data.personaId) {
           // Band mode streaming
@@ -107,9 +142,11 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
         if (data.personaId) {
           // Band mode complete
           setIsLoadingPersonas((prev) => {
-            const updated = { ...prev, [data.personaId]: false };
+            const personaId = String(data.personaId);
+            const updated: Record<string, boolean> = { ...prev };
+            updated[personaId] = false;
             // Check if all personas are done
-            const allDone = personas.every(pid => !updated[pid]);
+            const allDone = personas.every(pid => updated[pid] === false);
             if (allDone && onAnalyzingChange) {
               setTimeout(() => onAnalyzingChange(false), 0);
             }
@@ -118,12 +155,14 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
           setBandInsights((prev) => {
             const updated = {
               ...prev,
-              [data.personaId]: data.insights || [],
+              [data.personaId]: (data.insights as Insight[]) || [],
             };
             // Collect all insights for onInsightsChange
-            const allInsights = Object.values(updated).flat();
+            const allInsights = Object.values(updated).flatMap((value) => value ?? []) as Insight[];
             if (onInsightsChange) {
-              setTimeout(() => onInsightsChange(allInsights), 0);
+              const cb = onInsightsChange;
+              const payload = [...allInsights];
+              setTimeout(() => cb(payload), 0);
             }
             return updated;
           });
@@ -151,11 +190,48 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
           });
         }
       } else if (data.type === 'cache-hit') {
-        // Cache hit - insights will come via complete messages
+        // Cache hit - hydrate immediately if payload contains insights
         setIsLoading(false);
         setIsLoadingPersonas(Object.fromEntries(personas.map(p => [p, false])));
         if (onAnalyzingChange) {
           setTimeout(() => onAnalyzingChange(false), 0);
+        }
+
+        if (data.bandInsights) {
+          const bandData = data.bandInsights as Record<string, Array<Partial<Insight>> | undefined>;
+          const normalized: Record<string, Insight[]> = {};
+          for (const pid in bandData) {
+            if (!Object.prototype.hasOwnProperty.call(bandData, pid)) continue;
+            const items = bandData[pid] ?? [];
+            normalized[pid] = items.map((item, index) => ({
+              id: item.id ?? `cached-${pid}-${index}-${Date.now()}`,
+              type: item.type ?? 'lateral-prompt',
+              content: item.content ?? '',
+              timestamp: item.timestamp ?? Date.now(),
+              personaId: pid,
+            }));
+          }
+          setBandInsights(normalized);
+          const allInsights = Object.values(normalized).flat() as Insight[];
+          if (onInsightsChange) {
+            const cb = onInsightsChange;
+            const payload = [...allInsights];
+            setTimeout(() => cb(payload), 0);
+          }
+        } else if (data.insights) {
+          const normalized: Insight[] = (data.insights as Array<Partial<Insight>>).map((item, index) => ({
+            id: item.id ?? `cached-single-${index}-${Date.now()}`,
+            type: item.type ?? 'lateral-prompt',
+            content: item.content ?? '',
+            timestamp: item.timestamp ?? Date.now(),
+            personaId: item.personaId,
+          }));
+          setInsights(normalized);
+          if (onInsightsChange) {
+            const cb = onInsightsChange;
+            const payload = [...normalized];
+            setTimeout(() => cb(payload), 0);
+          }
         }
       } else if (data.type === 'error') {
         setIsLoading(false);
@@ -184,7 +260,7 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
           <h2 className="text-sm font-bold tracking-[0.2em] text-gray-500 uppercase">Perspective Shift</h2>
           {hasAnyLoading && <div className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-ping"></div>}
         </div>
-        
+
         <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar px-6 pb-6">
           <div className="grid grid-cols-1 gap-4">
             {personas.map((pid) => {
@@ -199,13 +275,12 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
                   className="glass-panel rounded-xl p-4 border border-white/5"
                 >
                   <div className="flex items-center gap-2 mb-3">
-                    <span className={`text-xs font-bold uppercase tracking-widest ${
-                      persona?.color === 'cyan' ? 'text-cyan-300' :
+                    <span className={`text-xs font-bold uppercase tracking-widest ${persona?.color === 'cyan' ? 'text-cyan-300' :
                       persona?.color === 'rose' ? 'text-rose-300' :
-                      persona?.color === 'violet' ? 'text-violet-300' :
-                      persona?.color === 'purple' ? 'text-purple-300' :
-                      'text-gray-300'
-                    }`}>
+                        persona?.color === 'violet' ? 'text-violet-300' :
+                          persona?.color === 'purple' ? 'text-purple-300' :
+                            'text-gray-300'
+                      }`}>
                       {persona?.name || pid}
                     </span>
                     {isLoading && <div className="h-1 w-1 rounded-full bg-purple-500 animate-ping"></div>}
@@ -258,7 +333,7 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
         <h2 className="text-sm font-bold tracking-[0.2em] text-gray-500 uppercase">Perspective Shift</h2>
         {isLoading && <div className="h-1.5 w-1.5 rounded-full bg-purple-500 animate-ping"></div>}
       </div>
-      
+
       <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-4">
         {isLoading && streamingTexts._single && (
           <div className="bg-white/5 rounded-xl p-6 border border-white/10 animate-pulse">
@@ -268,13 +343,13 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
             </p>
           </div>
         )}
-        
+
         {!isLoading && insights.length === 0 && text.length >= 10 && (
           <div className="h-full flex flex-col items-center justify-center text-gray-600 opacity-40">
-             <div className="w-8 h-8 border-2 border-t-transparent border-white/20 rounded-full animate-spin mb-4"></div>
+            <div className="w-8 h-8 border-2 border-t-transparent border-white/20 rounded-full animate-spin mb-4"></div>
           </div>
         )}
-        
+
         {!isLoading && insights.length === 0 && text.length < 10 && (
           <div className="h-full flex flex-col items-center justify-center text-gray-700 opacity-30 select-none">
             <span className="text-6xl mb-4 font-thin opacity-50">↹</span>
@@ -283,7 +358,7 @@ export function Insights({ text, ws, personas, autoMode, onInsightsChange, onAna
             </p>
           </div>
         )}
-        
+
         {insights.map((insight) => (
           <Card key={insight.id} insight={insight} />
         ))}

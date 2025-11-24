@@ -1,6 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
-import { buildPrompt, buildBandPrompt } from './prompts';
-import type { Insight } from '../types';
+import { buildPrompt, buildBandPrompt, buildBiasPrompt } from './prompts';
+import type { Insight, Bias } from '../types';
 
 const apiKey = process.env.GEMINI_API_KEY || '';
 if (!apiKey) {
@@ -172,5 +172,45 @@ export function parseBandInsights(
   }
   
   return result;
+}
+
+export async function generateBiasDetection(text: string): Promise<Bias[]> {
+  if (!text.trim() || text.length < 10 || !ai) {
+    return [];
+  }
+
+  try {
+    const prompt = buildBiasPrompt(text);
+    
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+    
+    const fullText = response.text || '';
+    
+    // Try to extract JSON array from the response
+    try {
+      const jsonMatch = fullText.match(/\[[\s\S]*\]/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return parsed.map((item: any, index: number) => ({
+          id: `bias-${Date.now()}-${index}`,
+          type: item.type || 'unknown-bias',
+          content: item.content || '',
+          explanation: item.explanation || 'Potential bias detected.',
+          start: typeof item.start === 'number' ? item.start : 0,
+          end: typeof item.end === 'number' ? item.end : 0,
+        })).filter((bias: Bias) => bias.start >= 0 && bias.end > bias.start);
+      }
+    } catch (e) {
+      console.warn('Failed to parse bias detection JSON:', e);
+    }
+    
+    return [];
+  } catch (error) {
+    console.error('Bias detection error:', error);
+    return [];
+  }
 }
 

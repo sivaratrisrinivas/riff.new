@@ -4,7 +4,7 @@ import { publish } from './realtime';
 import { runChain } from './pipeline';
 import { fingerprint } from '../lib/fingerprint';
 import { insightCache } from '../lib/cache';
-import { generateInsights, parseInsights, generateBandInsights, parseBandInsights } from '../lib/ai';
+import { generateInsights, parseInsights, generateBandInsights, parseBandInsights, generateBiasDetection } from '../lib/ai';
 
 export interface RpcContext {
   sessionId: string;
@@ -23,6 +23,7 @@ export async function handleRpc(
     }
     
     const cmd = parsed.data;
+    console.info('[rpc] received', cmd.type, 'for session', ctx.sessionId);
     
     // Handle legacy analyze command (backward compatibility)
     if (cmd.type === 'analyze') {
@@ -55,25 +56,39 @@ export async function handleRpc(
 }
 
 async function handleAnalyze(cmd: AnalyzeCmd, ctx: RpcContext) {
-  const { text, personas } = cmd;
+  const { text, personas, detectBias } = cmd;
   const personaList = personas || [];
   const wsId = ctx.sessionId;
+  console.info('[rpc] analyze start', {
+    session: wsId,
+    personas: personaList,
+    length: text.length,
+    detectBias: detectBias || false,
+  });
   
   // Check cache
   const fp = fingerprint(text, personaList);
   const cached = insightCache.get(fp);
   
   if (cached) {
+    const cachedData = cached.data as Record<string, any>;
+    console.info('[rpc] cache-hit', {
+      session: wsId,
+      personas: personaList,
+      keys: Object.keys(cachedData || {}),
+    });
     publish(wsId, {
       type: 'cache-hit',
       fp: fp,
+      personas: personaList,
+      bandInsights: personaList.length > 0 ? cachedData : undefined,
+      insights: personaList.length === 0 ? cachedData.insights || [] : undefined,
     });
     
     // Send cached insights
     if (personaList.length > 0) {
-      const cachedData = cached.data as Record<string, any[]>;
       for (const pid of personaList) {
-        const insights = cachedData[pid] || [];
+        const insights = (cachedData[pid] as any[]) || [];
         publish(wsId, {
           type: 'complete',
           personaId: pid,
@@ -139,6 +154,20 @@ async function handleAnalyze(cmd: AnalyzeCmd, ctx: RpcContext) {
       type: 'complete',
       insights: insights,
     });
+  }
+  
+  // Run bias detection if requested
+  if (detectBias) {
+    try {
+      const biases = await generateBiasDetection(text);
+      publish(wsId, {
+        type: 'biases',
+        biases: biases,
+      });
+    } catch (error) {
+      console.error('Bias detection error:', error);
+      // Don't fail the whole request if bias detection fails
+    }
   }
   
   return { ok: true };

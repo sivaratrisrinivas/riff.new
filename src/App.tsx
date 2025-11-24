@@ -2,45 +2,129 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { Editor } from './components/Editor';
 import { Insights } from './components/Insights';
 import { PersonaBar } from './components/PersonaBar';
-import type { Insight } from './types';
+import type { Insight, Bias } from './types';
 import { PERSONAS } from './lib/personas';
 
 export function App() {
   const [text, setText] = useState('');
+  const [analyzedText, setAnalyzedText] = useState('');
   const [ws, setWs] = useState<WebSocket | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
   const [accentColor, setAccentColor] = useState<'cyan' | 'rose' | 'violet'>('cyan');
   const [selectedPersonas, setSelectedPersonas] = useState<string[]>(['steelman', 'red-team', 'socratic']);
   const [autoMode, setAutoMode] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [biasMode, setBiasMode] = useState(false);
+  const [biases, setBiases] = useState<Bias[]>([]);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectTimeoutRef = useRef<number | null>(null);
+  const shouldReconnectRef = useRef(true);
 
   useEffect(() => {
+    shouldReconnectRef.current = true;
+
+    const connect = () => {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}`;
-    const websocket = new WebSocket(wsUrl);
+      const attempt = reconnectAttemptsRef.current + 1;
 
-    websocket.onopen = () => {
-      setWs(websocket);
+      console.info(`[ws] connecting (attempt ${attempt})`);
+    const websocket = new WebSocket(wsUrl);
       wsRef.current = websocket;
+
+      websocket.onopen = () => {
+        if (!shouldReconnectRef.current) {
+          websocket.close();
+          return;
+        }
+
+        reconnectAttemptsRef.current = 0;
+        wsRef.current = websocket;
+        setWs(websocket);
+        console.info('[ws] connected');
     };
 
     websocket.onerror = (error) => {
-      console.error('WebSocket error:', error);
+        console.error('[ws] error', error);
     };
 
-    websocket.onclose = () => {
+      websocket.onclose = (event) => {
+        if (wsRef.current === websocket) {
+          wsRef.current = null;
       setWs(null);
-      setTimeout(() => {
-        if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
-          window.location.reload();
         }
-      }, 3000);
+
+        if (!shouldReconnectRef.current) {
+          return;
+        }
+
+        const nextAttempt = reconnectAttemptsRef.current + 1;
+        reconnectAttemptsRef.current = nextAttempt;
+        const delay = Math.min(1000 * 2 ** (nextAttempt - 1), 10000);
+
+        console.warn(
+          `[ws] closed (code ${event.code}${
+            event.reason ? `, reason: ${event.reason}` : ''
+          }). retrying in ${delay}ms`
+        );
+
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+        }
+
+        reconnectTimeoutRef.current = window.setTimeout(connect, delay);
     };
+    };
+
+    connect();
 
     return () => {
-      websocket.close();
+      shouldReconnectRef.current = false;
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      setWs(null);
     };
   }, []);
+
+  // Handle WebSocket messages for bias detection
+  useEffect(() => {
+    if (!ws) return;
+
+    const handleMessage = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'biases' && data.biases) {
+          setBiases(data.biases as Bias[]);
+          // Store the text that was analyzed for bias positioning
+          setAnalyzedText(text);
+        } else if (data.type === 'analyze' || data.type === 'stream') {
+          // When analysis starts, update analyzed text
+          setAnalyzedText(text);
+        } else if (data.type === 'complete' || data.type === 'cache-hit') {
+          // Keep analyzed text for bias positioning
+        }
+      } catch (e) {
+        // Ignore parse errors
+      }
+    };
+
+    ws.addEventListener('message', handleMessage);
+    return () => ws.removeEventListener('message', handleMessage);
+  }, [ws, biasMode]);
+
+  // Clear biases when text changes significantly or biasMode is turned off
+  useEffect(() => {
+    if (!biasMode) {
+      setBiases([]);
+    }
+  }, [biasMode, text]);
 
   const getBlobColors = () => {
     switch (accentColor) {
@@ -95,13 +179,22 @@ export function App() {
   };
 
   const handleAnalyze = () => {
-    if (!ws || !text || text.length < 10 || selectedPersonas.length === 0) return;
+    if (
+      !ws ||
+      ws.readyState !== WebSocket.OPEN ||
+      !text ||
+      text.length < 10 ||
+      selectedPersonas.length === 0
+    ) {
+      return;
+    }
     setIsAnalyzing(true);
     ws.send(JSON.stringify({ 
       type: 'analyze', 
       text,
       personas: selectedPersonas,
       fp: '', // Will be computed server-side
+      detectBias: biasMode,
     }));
   };
 
@@ -135,13 +228,15 @@ export function App() {
               onAnalyze={handleAnalyze}
               isAnalyzing={isAnalyzing}
               textLength={text.length}
+              biasMode={biasMode}
+              onToggleBiasMode={() => setBiasMode(!biasMode)}
             />
           </div>
         </div>
         
         <div className="flex-1 min-h-0 p-4 md:p-8 pt-0 grid grid-cols-1 lg:grid-cols-2 gap-4 md:gap-8">
           <div className="glass-panel rounded-2xl flex flex-col overflow-hidden relative group border-white/5 hover:border-white/10 transition-colors">
-            <Editor onTextChange={setText} />
+            <Editor onTextChange={setText} biases={biases} analyzedText={analyzedText} />
           </div>
           <div className="glass-panel rounded-2xl flex flex-col overflow-hidden relative group border-white/5 hover:border-white/10 transition-colors">
             <Insights 
@@ -149,6 +244,7 @@ export function App() {
               ws={ws} 
               personas={selectedPersonas}
               autoMode={autoMode}
+              biasMode={biasMode}
               onInsightsChange={handleInsightsChange}
               onAnalyzingChange={setIsAnalyzing}
             />
